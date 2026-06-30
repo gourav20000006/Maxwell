@@ -1,0 +1,197 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f7fb;
+  color: #15233b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #eef4ff 0%, #f8fbff 100%);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.toolbar {
+  padding: 10px 16px;
+  background: #0f172a;
+  color: #f8fafc;
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr minmax(260px, 300px);
+  align-items: start;
+  gap: 14px;
+}
+
+.toolbar-brand {
+  min-width: 220px;
+}
+
+.toolbar-brand h1 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.toolbar-brand p {
+  margin: 4px 0 0;
+  line-height: 1.3;
+  color: #cbd5e1;
+}
+
+.toolbar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.toolbar-section-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.controls-group {
+  align-items: flex-end;
+}
+
+.tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool-btn,
+.tool-btn.small {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: #1e293b;
+  color: #f8fafc;
+  transition: transform 120ms ease, background 120ms ease;
+  font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-btn.small {
+  min-width: auto;
+}
+
+.tool-icon {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 20px;
+  height: 20px;
+  font-size: 0.95rem;
+}
+
+.tool-btn:hover,
+.tool-btn.small:hover {
+  transform: translateY(-1px);
+  background: #334155;
+}
+
+.tool-btn.active {
+  background: #2563eb;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #e2e8f0;
+}
+
+.toolbar-hint {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 10px 12px;
+  border-radius: 10px;
+  line-height: 1.4;
+  color: #dbeafe;
+  max-width: 320px;
+}
+
+.measurement-group text {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 12px;
+  fill: #0f172a;
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.8);
+}
+
+.hint {
+  display: none;
+}
+
+.workspace {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  flex: 1;
+}
+
+.canvas-toolbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: white;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+}
+
+#canvas-wrapper {
+  flex: 1;
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #dbe3ef;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
+
+#plan-svg {
+  width: 100%;
+  height: 100%;
+  min-height: 680px;
+  background: #ffffff;
+  cursor: crosshair;
+}
+
+@media (max-width: 900px) {
+  .toolbar {
+    gap: 10px;
+  }
+
+  .toolbar p {
+    flex-basis: 100%;
+  }
+}

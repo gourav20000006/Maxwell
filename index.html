@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mini CAD v9.5 - Custom Annotation Engine</title>
+    <style>
+        body {
+            margin: 0; padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e; color: #fff;
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+        #toolbar {
+            background-color: #2d2d2d; padding: 10px 15px;
+            display: flex; gap: 8px; align-items: center;
+            border-bottom: 2px solid #3d3d3d; flex-wrap: wrap; z-index: 10;
+        }
+        .section-label {
+            font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+            color: #888; margin: 0 5px 0 10px; font-weight: bold;
+        }
+        button, select, input[type="number"] {
+            background-color: #444; color: white; border: 1px solid #555;
+            padding: 6px 12px; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 13px;
+        }
+        button:hover, select:hover { background-color: #555; }
+        button.active { background-color: #007acc; border-color: #0098ff; }
+        select { background-color: #252525; color: #00ffcc; border-color: #3d3d3d; }
+        input[type="number"] { background-color: #252525; color: #00ffcc; border-color: #3d3d3d; width: 45px; padding: 4px 8px; text-align: center; }
+        input[type="number"]:focus { border-color: #007acc; outline: none; }
+        
+        #main-container {
+            display: flex; flex-grow: 1; position: relative; overflow: hidden;
+        }
+        #workspace { flex-grow: 1; position: relative; cursor: default; outline: none; background-color: #1e1e1e;}
+        canvas { display: block; }
+        
+        #statusbar { background-color: #2d2d2d; padding: 5px 20px; font-size: 12px; color: #aaa; border-top: 1px solid #3d3d3d; display: flex; justify-content: space-between; z-index: 10; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
+<body>
+
+    <div id="toolbar">
+        <span style="font-weight: bold; color: #007acc; font-size: 15px;">MiniCAD v9.5</span>
+
+        <div class="section-label">Units</div>
+        <select id="unitSelector" onchange="changeUnitSystem()">
+            <option value="ft">Feet / Sq.Ft (ft / sqft)</option>
+            <option value="m">Meters (m)</option>
+            <option value="cm">Centimeters (cm)</option>
+        </select>
+
+        <div class="section-label">Interact</div>
+        <button id="selectBtn" class="active" onclick="setTool('select')">Pointer</button>
+        <button id="eraseBtn" onclick="setTool('erase')" style="border-color: #cc5533;">Erase</button>
+
+        <div class="section-label">Geometry</div>
+        <button id="straightLineBtn" onclick="setTool('straightLine')">Line</button>
+        <button id="orthoBtn" onclick="setTool('ortho')">Ortho</button>
+        <button id="rectBtn" onclick="setTool('rectangle')">Rectangle</button>
+        <button id="arcBtn" onclick="setTool('arc')">Arc</button>
+
+        <div class="section-label">Annotations</div>
+        <button id="textBtn" onclick="setTool('text')">Text</button>
+        <span style="font-size: 12px; margin-left: -2px; color: #aaa;">Size:</span>
+        <input type="number" id="textSizeInput" value="14" min="6" max="120" title="Text Font Size">
+
+        <button onclick="exportToPDF()" style="background-color: #225522; border-color: #337733; margin-left: auto;">💾 Export PDF</button>
+        <button onclick="clearCanvas()" style="background-color: #aa3333;">Clear</button>
+    </div>
+
+    <div id="main-container">
+        <div id="workspace" tabindex="0">
+            <canvas id="cadCanvas"></canvas>
+        </div>
+    </div>
+
+    <div id="statusbar">
+        <span id="coords">X: 0, Y: 0</span>
+        <span id="toolPrompt">Navigation: Choose the Pointer tool, then Left-Click & Drag empty space to pan page views.</span>
+        <span id="zoomDisplay">Scale: 1 Grid Square = 0.1 Ft</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('cadCanvas');
+        const ctx = canvas.getContext('2d');
+        const workspace = document.getElementById('workspace');
+        const coordsDisplay = document.getElementById('coords');
+        const toolPrompt = document.getElementById('toolPrompt');
+        const unitSelector = document.getElementById('unitSelector');
+        const textSizeInput = document.getElementById('textSizeInput');
+
+        let currentTool = 'select';
+        let isDrawing = false;
+        let startPoint = { x: 0, y: 0 };
+        let currentMousePos = { x: 0, y: 0 };
+        
+        let database = [];
+        let selectedObject = null;
+        let copiedObject = null;
+        
+        let isDraggingObject = false;
+        let isResizingObject = false;
+        let dragStartMouse = { x: 0, y: 0 };
+        let dragStartObjPos = { start: {}, end: {} };
+
+        const GRID_SIZE = 15; 
+        let zoomLevel = 1.0; let offsetX = 0; let offsetY = 0;
+        const MAX_ZOOM = 5.0; const MIN_ZOOM = 0.3;
+
+        let isPanning = false; 
+        let panStartMouse = { x: 0, y: 0 }; 
+        let panStartOffset = { x: 0, y: 0 };
+
+        const UNIT_CONFIGS = {
+            ft: { label: 'ft', areaLabel: 'sqft', mult: 0.1,     decimals: 1 },
+            m:  { label: 'm',  areaLabel: 'm²',  mult: 0.03048,  decimals: 2 },
+            cm: { label: 'cm', areaLabel: 'cm²', mult: 3.048,    decimals: 1 }
+        };
+        let activeUnit = 'ft';
+
+        workspace.focus();
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+        // Text Size dynamic update listener
+        textSizeInput.addEventListener('input', (e) => {
+            if (selectedObject && selectedObject.type === 'text') {
+                selectedObject.fontSize = parseInt(e.target.value) || 14;
+                drawEverything();
+            }
+        });
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - document.getElementById('toolbar').offsetHeight - document.getElementById('statusbar').offsetHeight;
+            drawEverything();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function snapToGrid(val) { return Math.round(val / GRID_SIZE) * GRID_SIZE; }
+        function toWorldCoords(screenX, screenY) { return { x: (screenX - offsetX) / zoomLevel, y: (screenY - offsetY) / zoomLevel }; }
+
+        function setTool(tool) {
+            currentTool = tool; selectedObject = null;
+            document.querySelectorAll('#toolbar button').forEach(btn => btn.classList.remove('active'));
+            const activeBtn = document.getElementById(tool + 'Btn');
+            if (activeBtn) activeBtn.classList.add('active');
+            
+            if (tool === 'select') { workspace.style.cursor = 'grab'; }
+            else { workspace.style.cursor = 'crosshair'; }
+            
+            drawEverything();
+        }
+
+        function changeUnitSystem() { activeUnit = unitSelector.value; drawEverything(); }
+
+        function clearCanvas() {
+            database = [];
+            selectedObject = null;
+            drawEverything();
+        }
+
+        function exportToPDF() {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF(canvas.width > canvas.height ? 'landscape' : 'portrait', 'px', [canvas.width, canvas.height]);
+            selectedObject = null; drawEverything();
+            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+            pdf.save('Blueprint_Layout_Plan.pdf');
+        }
+
+        function undo() { if (database.length > 0) { database.pop(); selectedObject = null; drawEverything(); } }
+        function deleteSelected() {
+            if (selectedObject) {
+                let idx = database.indexOf(selectedObject);
+                if (idx !== -1) { database.splice(idx, 1); selectedObject = null; drawEverything(); }
+            }
+        }
+
+        function executeZoom(factor, mx, my) {
+            let prevZoom = zoomLevel; zoomLevel = Math.min(Math.max(zoomLevel * factor, MIN_ZOOM), MAX_ZOOM);
+            offsetX = mx - (mx - offsetX) * (zoomLevel / prevZoom); offsetY = my - (my - offsetY) * (zoomLevel / prevZoom);
+            drawEverything();
+        }
+
+        function getDistanceToLine(pt, lineStart, lineEnd) {
+            let A = pt.x - lineStart.x; let B = pt.y - lineStart.y;
+            let C = lineEnd.x - lineStart.x; let D = lineEnd.y - lineStart.y;
+            let dot = A * C + B * D; let len_sq = C * C + D * D;
+            let param = len_sq !== 0 ? dot / len_sq : -1;
+            let xx = param < 0 ? lineStart.x : (param > 1 ? lineEnd.x : lineStart.x + param * C);
+            let yy = param < 0 ? lineStart.y : (param > 1 ? lineEnd.y : lineStart.y + param * D);
+            return Math.sqrt(Math.pow(pt.x - xx, 2) + Math.pow(pt.y - yy, 2));
+        }
+
+        function findClickedObject(worldPt) {
+            let tolerance = 10 / zoomLevel;
+            for (let i = database.length - 1; i >= 0; i--) {
+                let obj = database[i];
+                if (obj.type === 'line') { if (getDistanceToLine(worldPt, obj.start, obj.end) < tolerance) return { obj, index: i }; } 
+                else if (obj.type === 'rect') {
+                    let t = getDistanceToLine(worldPt, obj.start, {x: obj.end.x, y: obj.start.y});
+                    let b = getDistanceToLine(worldPt, {x: obj.start.x, y: obj.end.y}, obj.end);
+                    let l = getDistanceToLine(worldPt, obj.start, {x: obj.start.x, y: obj.end.y});
+                    let r = getDistanceToLine(worldPt, {x: obj.end.x, y: obj.start.y}, obj.end);
+                    if (Math.min(t, b, l, r) < tolerance) return { obj, index: i };
+                } else if (obj.type === 'text') {
+                    let fontRad = (obj.fontSize || 14) / 2;
+                    if (Math.sqrt(Math.pow(obj.start.x - worldPt.x, 2) + Math.pow(obj.start.y - worldPt.y, 2)) < (fontRad + 10 / zoomLevel)) return { obj, index: i };
+                }
+            }
+            return null;
+        }
+
+        function isOverResizeHandle(worldPt, obj) {
+            if (!obj || !obj.end) return false;
+            return Math.sqrt(Math.pow(worldPt.x - obj.end.x, 2) + Math.pow(worldPt.y - obj.end.y, 2)) < (12 / zoomLevel);
+        }
+
+        function drawEverything() {
+            ctx.fillStyle = '#1e1e1e'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.save(); ctx.translate(offsetX, offsetY); ctx.scale(zoomLevel, zoomLevel);
+
+            let startX = snapToGrid(toWorldCoords(0, 0).x) - GRID_SIZE * 2; let endX = snapToGrid(toWorldCoords(canvas.width, 0).x) + GRID_SIZE * 2;
+            let startY = snapToGrid(toWorldCoords(0, 0).y) - GRID_SIZE * 2; let endY = snapToGrid(toWorldCoords(0, canvas.height).y) + GRID_SIZE * 2;
+
+            ctx.strokeStyle = '#282828'; ctx.lineWidth = 0.5 / zoomLevel;
+            for(let x = startX; x <= endX; x += GRID_SIZE) { ctx.beginPath(); ctx.moveTo(x, startY); ctx.lineTo(x, endY); ctx.stroke(); }
+            for(let y = startY; y <= endY; y += GRID_SIZE) { ctx.beginPath(); ctx.moveTo(startX, y); ctx.lineTo(endX, y); ctx.stroke(); }
+
+            database.forEach((obj) => {
+                let isSel = (obj === selectedObject);
+                ctx.strokeStyle = isSel ? '#00ff00' : '#ffffff'; 
+                ctx.fillStyle = isSel ? 'rgba(0, 255, 0, 0.03)' : 'rgba(255,255,255,0.01)';
+                ctx.lineWidth = isSel ? 4 / zoomLevel : 3 / zoomLevel;
+
+                if (obj.type === 'line') {
+                    ctx.beginPath(); ctx.moveTo(obj.start.x, obj.start.y); ctx.lineTo(obj.end.x, obj.end.y); ctx.stroke();
+                    drawSegmentText(obj.start, obj.end, isSel);
+                } else if (obj.type === 'rect') {
+                    ctx.beginPath(); ctx.rect(obj.start.x, obj.start.y, obj.end.x - obj.start.x, obj.end.y - obj.start.y); ctx.fill(); ctx.stroke();
+                    drawRectangleLabels(obj, isSel);
+                } else if (obj.type === 'text') {
+                    ctx.fillStyle = isSel ? '#00ff00' : '#00ffcc'; 
+                    let fSize = obj.fontSize || 14;
+                    ctx.font = `${fSize / zoomLevel}px Segoe UI`; 
+                    ctx.textAlign = 'center';
+                    ctx.fillText(obj.label || obj.meta, obj.start.x, obj.start.y);
+                }
+
+                if (isSel && obj.end) {
+                    ctx.fillStyle = '#00ffff';
+                    ctx.fillRect(obj.end.x - 5/zoomLevel, obj.end.y - 5/zoomLevel, 10/zoomLevel, 10/zoomLevel);
+                }
+            });
+
+            if (isDrawing && !isPanning) {
+                ctx.strokeStyle = '#007acc'; ctx.lineWidth = 3 / zoomLevel;
+                if (['straightLine', 'ortho'].includes(currentTool)) {
+                    ctx.beginPath(); ctx.moveTo(startPoint.x, startPoint.y); ctx.lineTo(currentMousePos.x, currentMousePos.y); ctx.stroke();
+                } else if (currentTool === 'rectangle') {
+                    ctx.beginPath(); ctx.rect(startPoint.x, startPoint.y, currentMousePos.x - startPoint.x, currentMousePos.y - startPoint.y); ctx.stroke();
+                }
+            }
+            ctx.restore();
+        }
+
+        function getUnitValue(pixels) {
+            let conf = UNIT_CONFIGS[activeUnit];
+            return ((pixels / GRID_SIZE) * conf.mult).toFixed(conf.decimals) + conf.label;
+        }
+
+        function drawSegmentText(p1, p2, isSel) {
+            ctx.fillStyle = isSel ? '#00ff00' : '#0098ff'; ctx.font = `${11 / zoomLevel}px sans-serif`; ctx.textAlign = 'center';
+            let d = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+            ctx.fillText(getUnitValue(d), (p1.x + p2.x)/2, (p1.y + p2.y)/2 - 6 / zoomLevel);
+        }
+
+        function drawRectangleLabels(obj, isSel) {
+            ctx.fillStyle = isSel ? '#00ff00' : '#0098ff'; ctx.font = `bold ${11 / zoomLevel}px monospace`; ctx.textAlign = 'center';
+            let x1 = obj.start.x; let y1 = obj.start.y; let x2 = obj.end.x; let y2 = obj.end.y;
+            let wPixels = Math.abs(x2 - x1); let hPixels = Math.abs(y2 - y1);
+            
+            ctx.fillText(getUnitValue(wPixels), (x1 + x2)/2, Math.min(y1, y2) - 6 / zoomLevel);
+            ctx.save(); ctx.translate(Math.min(x1, x2) - 8 / zoomLevel, (y1 + y2)/2); ctx.rotate(-Math.PI / 2); ctx.fillText(getUnitValue(hPixels), 0, 0); ctx.restore();
+
+            let conf = UNIT_CONFIGS[activeUnit];
+            let areaVal = ((wPixels / GRID_SIZE) * conf.mult * (hPixels / GRID_SIZE) * conf.mult).toFixed(conf.decimals) + " " + conf.areaLabel;
+            ctx.fillStyle = '#00ffcc'; ctx.font = `${12 / zoomLevel}px Segoe UI`;
+            if (obj.label) {
+                ctx.fillText(obj.label, (x1+x2)/2, (y1+y2)/2 - 4 / zoomLevel); ctx.fillStyle = '#aaa'; ctx.fillText(`[${areaVal}]`, (x1+x2)/2, (y1+y2)/2 + 10 / zoomLevel);
+            } else { ctx.fillText(areaVal, (x1+x2)/2, (y1+y2)/2 + 4 / zoomLevel); }
+        }
+
+        window.addEventListener('keydown', (event) => {
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
+            
+            if (event.key === 'Delete' || event.key === 'Backspace') { deleteSelected(); }
+            if (event.ctrlKey && (event.key === 'z' || event.key === 'Z')) { event.preventDefault(); undo(); }
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault(); executeZoom(e.deltaY < 0 ? 1.1 : 0.9, e.clientX - canvas.getBoundingClientRect().left, e.clientY - canvas.getBoundingClientRect().top);
+        }, { passive: false });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return; 
+            const rect = canvas.getBoundingClientRect();
+            let rawMX = e.clientX - rect.left; let rawMY = e.clientY - rect.top;
+            
+            let worldPt = toWorldCoords(rawMX, rawMY);
+            let clickX = snapToGrid(worldPt.x); let clickY = snapToGrid(worldPt.y);
+
+            if (currentTool === 'select') {
+                if (selectedObject && isOverResizeHandle(worldPt, selectedObject)) {
+                    isResizingObject = true; return;
+                }
+                
+                let match = findClickedObject(worldPt);
+                if (match) {
+                    selectedObject = match.obj; isDraggingObject = true; dragStartMouse = { x: worldPt.x, y: worldPt.y };
+                    dragStartObjPos = { start: { ...selectedObject.start }, end: selectedObject.end ? { ...selectedObject.end } : null };
+                    
+                    if (selectedObject.type === 'text') {
+                        textSizeInput.value = selectedObject.fontSize || 14;
+                    }
+                    drawEverything(); return;
+                } else {
+                    selectedObject = null; isPanning = true; workspace.style.cursor = 'grabbing';
+                    panStartMouse = { x: e.clientX, y: e.clientY }; panStartOffset = { x: offsetX, y: offsetY };
+                    drawEverything(); return;
+                }
+            }
+            if (currentTool === 'erase') { let match = findClickedObject(worldPt); if (match) { database.splice(match.index, 1); selectedObject = null; drawEverything(); } return; }
+            if (currentTool === 'text') {
+                let userText = prompt("Enter text annotation:");
+                if (userText) { 
+                    let currentSize = parseInt(textSizeInput.value) || 14;
+                    database.push({ type: 'text', start: {x: clickX, y: clickY}, label: userText, fontSize: currentSize }); 
+                    drawEverything(); 
+                }
+                return;
+            }
+
+            isDrawing = true; startPoint = { x: clickX, y: clickY }; currentMousePos = { ...startPoint };
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            let rawMX = e.clientX - rect.left; let rawMY = e.clientY - rect.top;
+
+            if (isPanning) { 
+                offsetX = panStartOffset.x + (e.clientX - panStartMouse.x); 
+                offsetY = panStartOffset.y + (e.clientY - panStartMouse.y); 
+                drawEverything(); return; 
+            }
+            
+            let worldPt = toWorldCoords(rawMX, rawMY);
+            let sx = snapToGrid(worldPt.x); let sy = snapToGrid(worldPt.y);
+            coordsDisplay.innerText = `X: ${sx}, Y: ${sy}`;
+
+            if (isResizingObject && selectedObject) {
+                selectedObject.end.x = sx; selectedObject.end.y = sy;
+                drawEverything(); return;
+            }
+            if (isDraggingObject && selectedObject) {
+                let dx = snapToGrid(worldPt.x - dragStartMouse.x); let dy = snapToGrid(worldPt.y - dragStartMouse.y);
+                selectedObject.start.x = dragStartObjPos.start.x + dx; selectedObject.start.y = dragStartObjPos.start.y + dy;
+                if (selectedObject.end) { selectedObject.end.x = dragStartObjPos.end.x + dx; selectedObject.end.y = dragStartObjPos.end.y + dy; }
+                drawEverything(); return;
+            }
+
+            if (!isDrawing) return;
+            if (currentTool === 'ortho') {
+                if (Math.abs(sx - startPoint.x) > Math.abs(sy - startPoint.y)) { currentMousePos = { x: sx, y: startPoint.y }; }
+                else { currentMousePos = { x: startPoint.x, y: sy }; }
+            } else { currentMousePos = { x: sx, y: sy }; }
+            drawEverything();
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            if (isPanning && currentTool === 'select') { workspace.style.cursor = 'grab'; }
+            isPanning = false; isDraggingObject = false; isResizingObject = false;
+            
+            if (!isDrawing) return; isDrawing = false;
+            if (['straightLine', 'ortho', 'rectangle'].includes(currentTool)) {
+                let typeMap = { straightLine: 'line', ortho: 'line', rectangle: 'rect' };
+                database.push({ type: typeMap[currentTool], start: { ...startPoint }, end: { x: snapToGrid(currentMousePos.x), y: snapToGrid(currentMousePos.y) } });
+            }
+            drawEverything();
+        });
+
+        setTool('select');
+        resizeCanvas();
+    </script>
+</body>
+</html>
